@@ -29,7 +29,7 @@ func setMatches(t *testing.T, name string, s util.Set, expected []string) {
 }
 
 func Test_filter(t *testing.T) {
-	root, err := os.Getwd()
+	root, err := fs.GetCwd()
 	if err != nil {
 		t.Fatalf("failed to get working directory: %v", err)
 	}
@@ -77,16 +77,11 @@ func Test_filter(t *testing.T) {
 	graph.Connect(dag.BasicEdge("project-1", "project-2"))
 	graph.Connect(dag.BasicEdge("project-1", "project-4"))
 
-	r := &Resolver{
-		Graph:        graph,
-		PackageInfos: packageJSONs,
-		Cwd:          root,
-	}
-
 	testCases := []struct {
-		Name      string
-		Selectors []*TargetSelector
-		Expected  []string
+		Name             string
+		Selectors        []*TargetSelector
+		PackageInference *PackageInference
+		Expected         []string
 	}{
 		{
 			"select root package",
@@ -95,6 +90,7 @@ func Test_filter(t *testing.T) {
 					namePattern: util.RootPkgName,
 				},
 			},
+			nil,
 			[]string{util.RootPkgName},
 		},
 		{
@@ -106,6 +102,7 @@ func Test_filter(t *testing.T) {
 					namePattern:         "project-1",
 				},
 			},
+			nil,
 			[]string{"project-2", "project-4"},
 		},
 		{
@@ -117,6 +114,7 @@ func Test_filter(t *testing.T) {
 					namePattern:         "project-1",
 				},
 			},
+			nil,
 			[]string{"project-1", "project-2", "project-4"},
 		},
 		{
@@ -129,6 +127,7 @@ func Test_filter(t *testing.T) {
 					namePattern:         "project-1",
 				},
 			},
+			nil,
 			[]string{"project-0", "project-1", "project-2", "project-4", "project-5"},
 		},
 		{
@@ -139,6 +138,7 @@ func Test_filter(t *testing.T) {
 					namePattern:       "project-2",
 				},
 			},
+			nil,
 			[]string{"project-1", "project-2", "project-0"},
 		},
 		{
@@ -150,6 +150,7 @@ func Test_filter(t *testing.T) {
 					namePattern:       "project-2",
 				},
 			},
+			nil,
 			[]string{"project-0", "project-1"},
 		},
 		{
@@ -166,6 +167,7 @@ func Test_filter(t *testing.T) {
 					namePattern:         "project-1",
 				},
 			},
+			nil,
 			[]string{"project-0", "project-1", "project-2", "project-4"},
 		},
 		{
@@ -175,6 +177,7 @@ func Test_filter(t *testing.T) {
 					namePattern: "project-2",
 				},
 			},
+			nil,
 			[]string{"project-2"},
 		},
 		// Note: we don't support the option to switch path prefix mode
@@ -191,27 +194,30 @@ func Test_filter(t *testing.T) {
 			"select by parentDir using glob",
 			[]*TargetSelector{
 				{
-					parentDir: filepath.Join(root, "/packages/*"),
+					parentDir: root.UntypedJoin("packages", "*").ToStringDuringMigration(),
 				},
 			},
+			nil,
 			[]string{"project-0", "project-1"},
 		},
 		{
 			"select by parentDir using globstar",
 			[]*TargetSelector{
 				{
-					parentDir: filepath.Join(root, "/project-5/**"),
+					parentDir: root.UntypedJoin("project-5", "**").ToStringDuringMigration(),
 				},
 			},
+			nil,
 			[]string{"project-5", "project-6"},
 		},
 		{
 			"select by parentDir with no glob",
 			[]*TargetSelector{
 				{
-					parentDir: filepath.Join(root, "/project-5"),
+					parentDir: root.UntypedJoin("project-5").ToStringDuringMigration(),
 				},
 			},
+			nil,
 			[]string{"project-5"},
 		},
 		{
@@ -222,35 +228,70 @@ func Test_filter(t *testing.T) {
 					namePattern: "project-1",
 				},
 			},
+			nil,
 			[]string{"project-0", "project-2", "project-3", "project-4", "project-5", "project-6"},
 		},
 		{
 			"select by parentDir and exclude one package by pattern",
 			[]*TargetSelector{
 				{
-					parentDir: filepath.Join(root, "/packages/*"),
+					parentDir: root.UntypedJoin("packages", "*").ToStringDuringMigration(),
 				},
 				{
 					exclude:     true,
 					namePattern: "*-1",
 				},
 			},
+			nil,
 			[]string{"project-0"},
 		},
 		{
 			"select root package by directory",
 			[]*TargetSelector{
 				{
-					parentDir: root,
+					parentDir: root.ToStringDuringMigration(),
 				},
 			},
+			nil,
 			[]string{util.RootPkgName},
+		},
+		{
+			"select packages directory",
+			[]*TargetSelector{},
+			&PackageInference{
+				DirectoryRoot: root.UntypedJoin("packages"),
+			},
+			[]string{"project-0", "project-1"},
+		},
+		{
+			"infer single package",
+			[]*TargetSelector{},
+			&PackageInference{
+				DirectoryRoot: root.UntypedJoin("packages", "project-0"),
+				PackageName:   "project-0",
+			},
+			[]string{"project-0"},
+		},
+		{
+			"infer single package from subdirectory",
+			[]*TargetSelector{},
+			&PackageInference{
+				DirectoryRoot: root.UntypedJoin("packages", "project-0", "src"),
+				PackageName:   "project-0",
+			},
+			[]string{"project-0"},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
-			pkgs, err := r.GetFilteredPackages(tc.Selectors)
+			r := &Resolver{
+				Graph:        graph,
+				PackageInfos: packageJSONs,
+				Cwd:          root.ToStringDuringMigration(),
+				Inference:    tc.PackageInference,
+			}
+			pkgs, err := r.getFilteredPackages(tc.Selectors)
 			if err != nil {
 				t.Fatalf("%v failed to filter packages: %v", tc.Name, err)
 			}
@@ -259,7 +300,12 @@ func Test_filter(t *testing.T) {
 	}
 
 	t.Run("report unmatched filters", func(t *testing.T) {
-		pkgs, err := r.GetFilteredPackages([]*TargetSelector{
+		r := &Resolver{
+			Graph:        graph,
+			PackageInfos: packageJSONs,
+			Cwd:          root.ToStringDuringMigration(),
+		}
+		pkgs, err := r.getFilteredPackages([]*TargetSelector{
 			{
 				excludeSelf:         true,
 				includeDependencies: true,
@@ -296,7 +342,7 @@ func Test_matchScopedPackage(t *testing.T) {
 		PackageInfos: packageJSONs,
 		Cwd:          root,
 	}
-	pkgs, err := r.GetFilteredPackages([]*TargetSelector{
+	pkgs, err := r.getFilteredPackages([]*TargetSelector{
 		{
 			namePattern: "bar",
 		},
@@ -330,7 +376,7 @@ func Test_matchExactPackages(t *testing.T) {
 		PackageInfos: packageJSONs,
 		Cwd:          root,
 	}
-	pkgs, err := r.GetFilteredPackages([]*TargetSelector{
+	pkgs, err := r.getFilteredPackages([]*TargetSelector{
 		{
 			namePattern: "bar",
 		},
@@ -364,7 +410,7 @@ func Test_matchMultipleScopedPackages(t *testing.T) {
 		PackageInfos: packageJSONs,
 		Cwd:          root,
 	}
-	pkgs, err := r.GetFilteredPackages([]*TargetSelector{
+	pkgs, err := r.getFilteredPackages([]*TargetSelector{
 		{
 			namePattern: "bar",
 		},
@@ -523,7 +569,7 @@ func Test_SCM(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
-			pkgs, err := r.GetFilteredPackages(tc.Selectors)
+			pkgs, err := r.getFilteredPackages(tc.Selectors)
 			if err != nil {
 				t.Fatalf("%v failed to filter packages: %v", tc.Name, err)
 			}
