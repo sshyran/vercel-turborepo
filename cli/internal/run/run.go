@@ -980,23 +980,17 @@ func (ec *execContext) logError(log hclog.Logger, prefix string, err error) {
 func (ec *execContext) exec(ctx gocontext.Context, packageTask *nodes.PackageTask, deps dag.Set) error {
 	cmdTime := time.Now()
 
-	outputPrefix := packageTask.OutputPrefix(ec.isSinglePackage)
-	targetLogger := ec.logger.Named(outputPrefix)
+	// Just the prefix
+	prefix := packageTask.OutputPrefix(ec.isSinglePackage)
+	prettyPrefix := ec.colorCache.PrefixWithColor(packageTask.PackageName, prefix)
+
+	targetUI := &cli.BasicUi{}
+	targetLogger := ec.logger.Named("")
+
 	targetLogger.Debug("start")
 
 	// Setup tracer
 	tracer := ec.runState.Run(packageTask.TaskID)
-
-	// Create a logger
-	colorPrefixer := ec.colorCache.PrefixColor(packageTask.PackageName)
-	prettyTaskPrefix := colorPrefixer("%s: ", outputPrefix)
-	targetUI := &cli.PrefixedUi{
-		Ui:           ec.ui,
-		OutputPrefix: prettyTaskPrefix,
-		InfoPrefix:   prettyTaskPrefix,
-		ErrorPrefix:  prettyTaskPrefix,
-		WarnPrefix:   prettyTaskPrefix,
-	}
 
 	passThroughArgs := ec.rs.ArgsForTask(packageTask.Task)
 	hash, err := ec.taskHashes.CalculateTaskHash(packageTask, deps, passThroughArgs)
@@ -1017,14 +1011,17 @@ func (ec *execContext) exec(ctx gocontext.Context, packageTask *nodes.PackageTas
 	}
 	// Cache ---------------------------------------------
 	taskCache := ec.runCache.TaskCache(packageTask, hash)
-	hit, err := taskCache.RestoreOutputs(ctx, targetUI, targetLogger)
+
+	hit, err := taskCache.RestoreOutputs(ctx, ec.ui, targetLogger, prettyPrefix)
+
 	if err != nil {
 		targetUI.Error(fmt.Sprintf("error fetching from cache: %s", err))
 	} else if hit {
 		tracer(TargetCached, nil)
 		return nil
 	}
-	// Setup command execution
+
+	// Setup command execution©
 	argsactual := append([]string{"run"}, packageTask.Task)
 	if len(passThroughArgs) > 0 {
 		// This will be either '--' or a typed nil
@@ -1043,32 +1040,43 @@ func (ec *execContext) exec(ctx gocontext.Context, packageTask *nodes.PackageTas
 	// Setup stdout/stderr
 	// If we are not caching anything, then we don't need to write logs to disk
 	// be careful about this conditional given the default of cache = true
-	writer, err := taskCache.OutputWriter(outputPrefix)
+	writer, err := taskCache.OutputWriter()
 	if err != nil {
 		tracer(TargetBuildFailed, err)
-		ec.logError(targetLogger, prettyTaskPrefix, err)
+		ec.logError(targetLogger, "", err)
 		if !ec.rs.Opts.runOpts.continueOnError {
 			os.Exit(1)
 		}
 	}
+
+	// TODO: These logStreamers are _both_ writing to a file (`logger`) and
+	// streaming to stdout/stderr. We need to separate them so we write
+	// non-prefixed output to the file and prefix to terminal.
 	logger := log.New(writer, "", 0)
 	// Setup a streamer that we'll pipe cmd.Stdout to
-	logStreamerOut := logstreamer.NewLogstreamer(logger, prettyTaskPrefix, false)
+	logStreamerOut := logstreamer.NewLogstreamer(logger, prettyPrefix, false)
 	// Setup a streamer that we'll pipe cmd.Stderr to.
-	logStreamerErr := logstreamer.NewLogstreamer(logger, prettyTaskPrefix, false)
+	logStreamerErr := logstreamer.NewLogstreamer(logger, prettyPrefix, false)
+
 	cmd.Stderr = logStreamerErr
 	cmd.Stdout = logStreamerOut
 	// Flush/Reset any error we recorded
 	logStreamerErr.FlushRecord()
 	logStreamerOut.FlushRecord()
+
 	closeOutputs := func() error {
 		var closeErrors []error
+
+		fmt.Printf("[debug] closing stdout streamer \n")
 		if err := logStreamerOut.Close(); err != nil {
 			closeErrors = append(closeErrors, errors.Wrap(err, "log stdout"))
 		}
+		fmt.Printf("[debug] closing stderr streamer \n")
 		if err := logStreamerErr.Close(); err != nil {
 			closeErrors = append(closeErrors, errors.Wrap(err, "log stderr"))
 		}
+
+		fmt.Printf("[debug] closing writer streamer \n")
 		if err := writer.Close(); err != nil {
 			closeErrors = append(closeErrors, errors.Wrap(err, "log file"))
 		}

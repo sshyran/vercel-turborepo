@@ -129,5 +129,6 @@ func (l *Logstreamer) out(str string) {
 		str = l.prefix + str
 	}
 
+	// writing to a file
 	l.Logger.Print(str)
 }
