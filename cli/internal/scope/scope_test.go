@@ -24,6 +24,10 @@ func (m *mockSCM) ChangedFiles(_fromCommit string, _toCommit string, _includeUnt
 }
 
 func TestResolvePackages(t *testing.T) {
+	root, err := fs.GetCwd()
+	if err != nil {
+		t.Fatalf("cwd: %v", err)
+	}
 	tui := ui.Default()
 	logger := hclog.Default()
 	// Dependency graph:
@@ -291,7 +295,7 @@ func TestResolvePackages(t *testing.T) {
 				IgnorePatterns:       []string{tc.ignore},
 				GlobalDepPatterns:    tc.globalDeps,
 				PackageInferenceRoot: tc.inferPkgPath,
-			}, filepath.FromSlash("/dummy/repo/root"), scm, &context.Context{
+			}, root, scm, &context.Context{
 				PackageInfos:     packagesInfos,
 				PackageNames:     packageNames,
 				TopologicalGraph: graph,

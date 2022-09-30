@@ -2,8 +2,6 @@ package filter
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -194,7 +192,7 @@ func Test_filter(t *testing.T) {
 			"select by parentDir using glob",
 			[]*TargetSelector{
 				{
-					parentDir: root.UntypedJoin("packages", "*").ToStringDuringMigration(),
+					parentDir: turbopath.MakeRelativeSystemPath("packages", "*"),
 				},
 			},
 			nil,
@@ -204,7 +202,7 @@ func Test_filter(t *testing.T) {
 			"select by parentDir using globstar",
 			[]*TargetSelector{
 				{
-					parentDir: root.UntypedJoin("project-5", "**").ToStringDuringMigration(),
+					parentDir: turbopath.MakeRelativeSystemPath("project-5", "**"),
 				},
 			},
 			nil,
@@ -214,7 +212,7 @@ func Test_filter(t *testing.T) {
 			"select by parentDir with no glob",
 			[]*TargetSelector{
 				{
-					parentDir: root.UntypedJoin("project-5").ToStringDuringMigration(),
+					parentDir: turbopath.MakeRelativeSystemPath("project-5"),
 				},
 			},
 			nil,
@@ -235,7 +233,7 @@ func Test_filter(t *testing.T) {
 			"select by parentDir and exclude one package by pattern",
 			[]*TargetSelector{
 				{
-					parentDir: root.UntypedJoin("packages", "*").ToStringDuringMigration(),
+					parentDir: turbopath.MakeRelativeSystemPath("packages", "*"),
 				},
 				{
 					exclude:     true,
@@ -249,7 +247,7 @@ func Test_filter(t *testing.T) {
 			"select root package by directory",
 			[]*TargetSelector{
 				{
-					parentDir: root.ToStringDuringMigration(),
+					parentDir: turbopath.MakeRelativeSystemPath("."), // input . gets cleaned to ""
 				},
 			},
 			nil,
@@ -259,7 +257,7 @@ func Test_filter(t *testing.T) {
 			"select packages directory",
 			[]*TargetSelector{},
 			&PackageInference{
-				DirectoryRoot: root.UntypedJoin("packages"),
+				DirectoryRoot: turbopath.MakeRelativeSystemPath("packages"),
 			},
 			[]string{"project-0", "project-1"},
 		},
@@ -267,7 +265,7 @@ func Test_filter(t *testing.T) {
 			"infer single package",
 			[]*TargetSelector{},
 			&PackageInference{
-				DirectoryRoot: root.UntypedJoin("packages", "project-0"),
+				DirectoryRoot: turbopath.MakeRelativeSystemPath("packages", "project-0"),
 				PackageName:   "project-0",
 			},
 			[]string{"project-0"},
@@ -276,7 +274,7 @@ func Test_filter(t *testing.T) {
 			"infer single package from subdirectory",
 			[]*TargetSelector{},
 			&PackageInference{
-				DirectoryRoot: root.UntypedJoin("packages", "project-0", "src"),
+				DirectoryRoot: turbopath.MakeRelativeSystemPath("packages", "project-0", "src"),
 				PackageName:   "project-0",
 			},
 			[]string{"project-0"},
@@ -288,7 +286,7 @@ func Test_filter(t *testing.T) {
 			r := &Resolver{
 				Graph:        graph,
 				PackageInfos: packageJSONs,
-				Cwd:          root.ToStringDuringMigration(),
+				Cwd:          root,
 				Inference:    tc.PackageInference,
 			}
 			pkgs, err := r.getFilteredPackages(tc.Selectors)
@@ -303,7 +301,7 @@ func Test_filter(t *testing.T) {
 		r := &Resolver{
 			Graph:        graph,
 			PackageInfos: packageJSONs,
-			Cwd:          root.ToStringDuringMigration(),
+			Cwd:          root,
 		}
 		pkgs, err := r.getFilteredPackages([]*TargetSelector{
 			{
@@ -325,7 +323,7 @@ func Test_filter(t *testing.T) {
 }
 
 func Test_matchScopedPackage(t *testing.T) {
-	root, err := os.Getwd()
+	root, err := fs.GetCwd()
 	if err != nil {
 		t.Fatalf("failed to get working directory: %v", err)
 	}
@@ -354,7 +352,7 @@ func Test_matchScopedPackage(t *testing.T) {
 }
 
 func Test_matchExactPackages(t *testing.T) {
-	root, err := os.Getwd()
+	root, err := fs.GetCwd()
 	if err != nil {
 		t.Fatalf("failed to get working directory: %v", err)
 	}
@@ -388,7 +386,7 @@ func Test_matchExactPackages(t *testing.T) {
 }
 
 func Test_matchMultipleScopedPackages(t *testing.T) {
-	root, err := os.Getwd()
+	root, err := fs.GetCwd()
 	if err != nil {
 		t.Fatalf("failed to get working directory: %v", err)
 	}
@@ -422,7 +420,7 @@ func Test_matchMultipleScopedPackages(t *testing.T) {
 }
 
 func Test_SCM(t *testing.T) {
-	root, err := os.Getwd()
+	root, err := fs.GetCwd()
 	if err != nil {
 		t.Fatalf("failed to get working directory: %v", err)
 	}
@@ -496,7 +494,7 @@ func Test_SCM(t *testing.T) {
 			[]*TargetSelector{
 				{
 					fromRef:   "HEAD~1",
-					parentDir: root,
+					parentDir: ".",
 				},
 			},
 			[]string{util.RootPkgName},
@@ -506,7 +504,7 @@ func Test_SCM(t *testing.T) {
 			[]*TargetSelector{
 				{
 					fromRef:   "HEAD~1",
-					parentDir: filepath.Join(root, "package-2"),
+					parentDir: "package-2",
 				},
 			},
 			[]string{"package-2"},
